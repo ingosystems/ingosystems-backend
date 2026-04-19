@@ -15,14 +15,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
-const client_1 = require("@prisma/client");
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const pg_1 = require("pg");
-const adapter_pg_1 = require("@prisma/adapter-pg");
 dotenv_1.default.config();
 const pool = new pg_1.Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new adapter_pg_1.PrismaPg(pool);
-const prisma = new client_1.PrismaClient({ adapter });
 const app = (0, express_1.default)();
 const port = process.env.PORT || 5000;
 app.use((0, cors_1.default)());
@@ -41,8 +37,8 @@ const transporter = nodemailer_1.default.createTransport({
 // Get all products
 app.get('/api/products', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const products = yield prisma.product.findMany();
-        res.json(products);
+        const result = yield pool.query('SELECT * FROM "Product" ORDER BY "createdAt" DESC');
+        res.json(result.rows);
     }
     catch (error) {
         console.error('Error fetching products:', error);
@@ -52,12 +48,10 @@ app.get('/api/products', (req, res) => __awaiter(void 0, void 0, void 0, functio
 // Get product by slug
 app.get('/api/products/:slug', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const product = yield prisma.product.findUnique({
-            where: { slug: req.params.slug },
-        });
-        if (!product)
+        const result = yield pool.query('SELECT * FROM "Product" WHERE slug = $1', [req.params.slug]);
+        if (result.rows.length === 0)
             return res.status(404).json({ error: 'Product not found' });
-        res.json(product);
+        res.json(result.rows[0]);
     }
     catch (error) {
         console.error('Error fetching product:', error);
@@ -67,8 +61,8 @@ app.get('/api/products/:slug', (req, res) => __awaiter(void 0, void 0, void 0, f
 // Get all case studies
 app.get('/api/case-studies', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const caseStudies = yield prisma.caseStudy.findMany();
-        res.json(caseStudies);
+        const result = yield pool.query('SELECT * FROM "CaseStudy" ORDER BY "createdAt" DESC');
+        res.json(result.rows);
     }
     catch (error) {
         console.error('Error fetching case studies:', error);
@@ -88,17 +82,21 @@ app.post('/api/contact', (req, res) => __awaiter(void 0, void 0, void 0, functio
         // Try to save to DB, but don't crash if DB is down
         try {
             console.log('Attempting to create inquiry in DB...');
-            const inquiry = yield prisma.inquiry.create({
-                data: {
-                    name,
-                    company: company || '',
-                    email,
-                    phone: phone || '',
-                    message,
-                    interest: interest || 'General',
-                },
-            });
-            console.log('DB Inquiry created:', inquiry.id);
+            const insertQuery = `
+        INSERT INTO "Inquiry" (name, company, email, phone, message, interest, "createdAt")
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        RETURNING id
+      `;
+            const values = [
+                name,
+                company || '',
+                email,
+                phone || '',
+                message,
+                interest || 'General'
+            ];
+            const result = yield pool.query(insertQuery, values);
+            console.log('DB Inquiry created:', result.rows[0].id);
         }
         catch (dbError) {
             console.error('Database failed, proceeding with email only:', dbError);
